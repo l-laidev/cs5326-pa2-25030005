@@ -37,8 +37,10 @@ if __name__ == "__main__":
     
     if args.dataset == "alpaca":
         dataset = load_dataset("json", data_files="generations/alpaca_eval_baseline.json")
-    else:
+    elif args.dataset == "hh":
         dataset = load_dataset("json", data_files="generations/hh_eval_baseline.json")
+    else:
+        raise ValueError(f"Unknown dataset: {args.dataset}")
     dataset = dataset.map(_preproc)
     
     dataset = DataLoader(dataset, batch_size=1, shuffle=False)
@@ -76,7 +78,7 @@ if __name__ == "__main__":
 
     base = Path("generations")
     base.mkdir(parents=True, exist_ok=True)
-    output_path = base / f"alpaca_eval_{args.name}.json"
+    output_path = base / f"{args.dataset}_eval_{args.name}.json"
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
 
