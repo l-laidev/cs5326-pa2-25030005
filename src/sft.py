@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -6,7 +8,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, get_cosine_schedul
 from datasets import load_dataset
 from torch.optim import AdamW
 
-from src.common import compute_logp, process_one_batch
+from src.common import compute_logp, process_one_batch, save_ckpt, load_ckpt
 
 
 MODEL_ID = "Qwen/Qwen2.5-0.5B"
@@ -20,6 +22,7 @@ WARMUP_RATIO = 0.03
 WEIGHT_DECAY = 0.1
 MAX_GRAD_NORM = 1.0
 EPOCHS = 1
+CKPT_INTERVAL = 100
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -104,12 +107,26 @@ if __name__ == "__main__":
     print("Starting training...")
     best_val_loss = float("inf")
     global_step = 0
+    resume_step = 0
+    ckpt_path = Path("checkpoints") / "sft" / "state.pt"
+    
+    if ckpt_path.exists():
+        global_step, resume_step, best_val_loss = load_ckpt(
+            model,
+            optimizer,
+            train_generator,
+            ckpt_path,
+            scheduler,
+        )
 
-    for epoch in tqdm.trange(EPOCHS, desc="Epochs"):
+    for epoch in (t1 := tqdm.trange(EPOCHS, desc="Epochs")):
         model.train()
         optimizer.zero_grad()
 
-        for step, batch in tqdm.tqdm(enumerate(train_loader), total=len(train_loader), desc="Step", leave=False):
+        step = resume_step
+        for batch in (t2 := tqdm.tqdm(train_loader, initial=resume_step, total=len(train_loader), desc="Step", leave=False)):
+            step += 1
+            
             prompts, responses = batch
             with torch.cuda.amp.autocast(dtype=torch.float16):
                 loss = compute_sft_loss(model, tokenizer, prompts, responses, MAX_LENGTH)
@@ -117,7 +134,7 @@ if __name__ == "__main__":
 
             scaler.scale(loss).backward()
 
-            if (step + 1) % GRADIENT_ACCUMULATION_STEPS == 0 or (step + 1) == len(train_loader):
+            if step % GRADIENT_ACCUMULATION_STEPS == 0 or step == len(train_loader):
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
 
@@ -129,16 +146,28 @@ if __name__ == "__main__":
                 global_step += 1
 
                 if global_step % 100 == 0:
-                    print(f"Epoch {epoch+1} | Step {global_step}/{total_steps} | Loss: {loss.item() * GRADIENT_ACCUMULATION_STEPS:.4f}")
+                    t2.set_description_str(f"Epoch {epoch+1} | Step {global_step}/{total_steps} | Loss: {loss.item() * GRADIENT_ACCUMULATION_STEPS:.4f}")
+                
+                if global_step % CKPT_INTERVAL == 0:
+                    save_ckpt(
+                        model,
+                        optimizer,
+                        train_generator,
+                        global_step,
+                        step,
+                        best_val_loss,
+                        ckpt_path,
+                        scheduler,
+                    )
 
         val_loss = evaluate(model, val_loader)
-        print(f"Epoch {epoch+1} Complete. Validation Loss: {val_loss:.4f}")
+        t1.set_description_str(f"Epoch {epoch+1} Complete. Validation Loss: {val_loss:.4f}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             model.save_pretrained("./best_sft_checkpoint")
             tokenizer.save_pretrained("./best_sft_checkpoint")
-            print("Saved best checkpoint.")
+            t1.set_description_str("Saved best checkpoint.")
 
     model.save_pretrained("./final_sft_checkpoint")
     tokenizer.save_pretrained("./final_sft_checkpoint")

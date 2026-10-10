@@ -1,5 +1,7 @@
+from pathlib import Path
 from typing import Literal
 
+import torch
 import torch.nn.functional as F
 
 
@@ -52,3 +54,47 @@ def compute_logp(logits, labels, reduction: Literal["none"] | Literal["sum"] = "
         raise ValueError(f"Unknown reduction: {reduction}")
     
     return token_log_probs
+
+def save_ckpt(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    train_generator: torch.Generator,
+    global_step: int,
+    resume_step: int,
+    best_metric: float,
+    path: Path,
+    scheduler: torch.optim.lr_scheduler.LambdaLR | None = None,
+):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    
+    torch.save(
+        {
+            "generator": train_generator.get_state(),
+            "model": model.state_dict(),
+            "optim": optimizer.state_dict(),
+            "global_step": global_step,
+            "resume_step": resume_step,
+            "best_metric": best_metric,
+            "scheduler": scheduler.state_dict() if scheduler is not None else None,
+        },
+        path
+    )
+
+def load_ckpt(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    train_generator: torch.Generator,
+    path: Path,
+    scheduler: torch.optim.lr_scheduler.LambdaLR | None = None,
+) -> int:
+    assert path.exists()
+    
+    states = torch.load(path)
+    
+    train_generator.set_state(states["generator"])
+    model.load_state_dict(states["model"])
+    optimizer.load_state_dict(states["optim"])
+    if scheduler is not None:
+        scheduler.load_state_dict(states["scheduler"])
+    
+    return states["global_step"], states["resume_step"], states["best_metric"]
