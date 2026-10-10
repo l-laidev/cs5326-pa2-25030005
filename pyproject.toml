@@ -20,6 +20,7 @@ dependencies = [
     "sentencepiece>=0.2.2",
     "tqdm>=4.70.1",
     "transformers>=4.43.0,<5",
+    "trl>=1.14.2",
 ]
 
 [tool.setuptools]
