@@ -42,4 +42,4 @@ if __name__ == "__main__":
     
     train_dataset = train_dataset.map(_preproc)
     
-    train_dpo(model, ref, tokenizer, train_dataset, val_dataset, "dpo-hh")
+    train_dpo(model, ref, tokenizer, train_dataset, val_dataset, "dpo-alpaca")
