@@ -73,6 +73,7 @@ if __name__ == "__main__":
             "id": id,
             "instruction": instruction,
             f"{args.name}": response,
+            "model": args.name,
             "baseline": baseline_response,
         })
 
