@@ -9,6 +9,8 @@ from datasets import load_dataset
 import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from common import apply_prompt_format
+
 
 MODEL_ID = "Qwen/Qwen2.5-0.5B"
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -33,7 +35,7 @@ if __name__ == "__main__":
     
     
     def _preproc(example):
-        return example["id"], example["instruction"], example["output"]
+        return example["id"], apply_prompt_format(example["instruction"]), example["output"]
     
     if args.dataset == "alpaca":
         dataset = load_dataset("json", data_files="generations/alpaca_eval_baseline.json")
@@ -49,12 +51,6 @@ if __name__ == "__main__":
     results = []
     with torch.no_grad(), torch.inference_mode():
         for idx, (id, instruction, baseline_response) in tqdm.tqdm(enumerate(dataset), desc="Generating"):
-            messages = [{"role": "user", "content": instruction}]
-            prompt = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
             inputs = tokenizer([instruction], return_tensors="pt").to(model.device)
             
             outputs = model.generate(
@@ -65,17 +61,17 @@ if __name__ == "__main__":
                 pad_token_id=tokenizer.eos_token_id,
             )
         
-        prompt_len = len(inputs.input_ids[0])
-        response = outputs[0][prompt_len:]
-        response = tokenizer.decode(response, skip_special_tokens=True)
-        
-        results.append({
-            "id": id,
-            "instruction": instruction,
-            f"{args.name}": response,
-            "model": args.name,
-            "baseline": baseline_response,
-        })
+            prompt_len = len(inputs.input_ids[0])
+            response = outputs[0][prompt_len:]
+            response = tokenizer.decode(response, skip_special_tokens=True)
+            
+            results.append({
+                "id": id,
+                "instruction": instruction,
+                f"{args.name}": response,
+                "model": args.name,
+                "baseline": baseline_response,
+            })
 
     base = Path("generations")
     base.mkdir(parents=True, exist_ok=True)

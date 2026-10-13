@@ -5,12 +5,28 @@ import torch
 import torch.nn.functional as F
 
 
-def process_one_batch(tokenizer, prompt, response, max_length):
-    prompt_messages = [{"role": "user", "content": prompt}]
-    prompt_text = tokenizer.apply_chat_template(prompt_messages, tokenize=False, add_generation_prompt=True)
-    
+def apply_prompt_format(messages, add_generation_prompt=True):
+    SYSTEM = """<|im_start|>system
+You are a helpful assistant.<|im_end|>"""
+
+    formatted = ""
+    for msg in messages:
+        role = "user"
+        content = msg
+        if isinstance(msg, dict):
+            role = msg['role']
+            content = msg['content']
+        
+        formatted += f"""<|im_start|>{role}
+{content}<|im_end|>
+"""
+    generation_prompt = "\n<|im_start|>assistant\n" if add_generation_prompt else ""
+    return SYSTEM + '\n' + formatted + generation_prompt
+        
+
+def process_one_batch(tokenizer, formatted_prompt_text, response, max_length):
     eos = tokenizer.eos_token if tokenizer.eos_token else ""
-    full_text = prompt_text + response + eos
+    full_text = formatted_prompt_text + response + eos
 
     encoded = tokenizer(
         full_text,
@@ -19,11 +35,11 @@ def process_one_batch(tokenizer, prompt, response, max_length):
         padding="max_length",
         return_tensors="pt",
     )
-    input_ids = encoded["input_ids"][0]
-    attention_mask = encoded["attention_mask"][0]
+    input_ids = encoded.input_ids[0]
+    attention_mask = encoded.attention_mask[0]
 
-    prompt_encoded = tokenizer(prompt_text, max_length=max_length, truncation=True, return_tensors="pt")
-    prompt_len = len(prompt_encoded["input_ids"][0])
+    prompt_encoded = tokenizer(formatted_prompt_text, max_length=max_length, truncation=True, return_tensors="pt")
+    prompt_len = len(prompt_encoded.input_ids[0])
 
     # response-only masking with -100
     labels = input_ids.clone()
@@ -37,22 +53,24 @@ def compute_logp(logits, labels, reduction: Literal["none"] | Literal["sum"] = "
     shift_logits = logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
     
-    flat_logits = shift_logits.view(-1, shift_logits.size(-1))
-    flat_labels = shift_labels.view(-1)
+    if logits.requires_grad:  # reference model does not require grad
+        shift_logits.retain_grad()
     
-    log_probs = F.log_softmax(flat_logits, dim=-1)
-    token_log_probs = log_probs.gather(1, flat_labels.unsqueeze(1)).squeeze(1)
+    mask = (shift_labels == -100)
+    shift_labels[mask] = 0  # pick the first one, will be discarded
     
-    mask = (flat_labels != -100).float()
-    token_log_probs = token_log_probs * mask
+    log_probs = F.log_softmax(shift_logits, dim=-1)
+    token_log_probs = log_probs.gather(-1, shift_labels.unsqueeze(-1)).squeeze(-1)
+    
+    token_log_probs = token_log_probs * (~mask)
     
     if reduction == "none":
-        token_log_probs = token_log_probs[mask]
+        pass
     elif reduction == "sum":
-        token_log_probs = token_log_probs.view(labels.size(0), -1).sum(dim=-1)
+        token_log_probs = token_log_probs.sum(dim=-1)
     else:
         raise ValueError(f"Unknown reduction: {reduction}")
-    
+
     return token_log_probs
 
 def save_ckpt(

@@ -46,7 +46,7 @@ Response B: {rB}
 ####### END PAIR
 """
     
-    pair_prompt = list(map(_format_one, range(len(instr))))
+    pair_prompt = list(map(_format_one, range(len(pairs))))
     pair_prompt = "\n".join(pair_prompt)
     
     return f"""
@@ -141,7 +141,7 @@ if __name__ == "__main__":
         resB =[b[b["model"]] for b in B]
         
         pairs = []
-        for pair in range(len(filesA)):
+        for pair in range(len(A)):
             srcA = A if random.random() < 0.5 else B
             srcB = A if srcA == B else B
             
@@ -160,10 +160,14 @@ if __name__ == "__main__":
         judged = perform_judgement(prompt, args.judge, args.retries)
         
         if judged is not None:
-            for i in range(len(filesA)):
+            for i in range(len(A)):
                 who_won = judged[i]
-                model_name = pairs[i][f"id{who_won}"]
-                wins[model_name] += 1
+                if "tie"in who_won.lower():
+                    wins[pairs[i]["idA"]] += 1
+                    wins[pairs[i]["idB"]] += 1
+                else:
+                    model_name = pairs[i][f"id{who_won}"]
+                    wins[model_name] += 1
         else:
             fails += 1
             with open(failure_path, "a") as f:
@@ -173,8 +177,8 @@ if __name__ == "__main__":
                 }))
                 f.write("\n")
         
-        save_judge_ckpt(idx + len(filesA), wins, fails, ties, save_path)
+        save_judge_ckpt(idx + len(A), wins, fails, ties, save_path)
         time.sleep(args.sleep)
         
-    save_judge_ckpt(idx + len(filesA), wins, fails, ties, save_path)
+    save_judge_ckpt(idx + len(A), wins, fails, ties, save_path)
     print(f"Saved judge results to: {save_path}")

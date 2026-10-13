@@ -2,6 +2,7 @@ import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from common import apply_prompt_format
 from src.dpo import train_dpo
 
 
@@ -17,9 +18,9 @@ if __name__ == "__main__":
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    model = AutoModelForCausalLM.from_pretrained("./best_sft_checkpoint", torch_dtype=torch.float32)
-    ref = AutoModelForCausalLM.from_pretrained("./best_sft_checkpoint", torch_dtype=torch.float16)
-    for p in ref.parameters:
+    model = AutoModelForCausalLM.from_pretrained("./best_sft_checkpoint", torch_dtype=torch.bfloat16)
+    ref = AutoModelForCausalLM.from_pretrained("./best_sft_checkpoint", torch_dtype=torch.bfloat16)
+    for p in ref.parameters():
         p.requires_grad = False
     ref.eval()
     
@@ -37,7 +38,7 @@ if __name__ == "__main__":
         prompt, rejected = example["rejected"].split(" Assistant: ")[0] 
         
         prompt, chosen, rejected = prompt.strip(), chosen.strip(), rejected.strip()
-        return prompt + "Assistant: ", chosen, rejected
+        return apply_prompt_format(prompt), chosen, rejected
     
     train_dataset = train_dataset.map(_preproc)
     

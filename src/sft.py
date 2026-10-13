@@ -8,7 +8,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, get_cosine_schedul
 from datasets import load_dataset
 from torch.optim import AdamW
 
-from src.common import compute_logp, process_one_batch, save_ckpt, load_ckpt
+from src.common import apply_prompt_format, compute_logp, process_one_batch, save_ckpt, load_ckpt
 
 
 MODEL_ID = "Qwen/Qwen2.5-0.5B"
@@ -45,7 +45,7 @@ def build_sft_batch(tokenizer, prompts, responses, max_length):
         "labels": torch.stack(batch_labels),
     }
 
-def compute_response_logprobs(model, tokenizer, prompts, responses, max_length):
+def compute_response_logprobs(model, tokenizer, prompts, responses, max_length, reduction="sum"):
     batch = build_sft_batch(tokenizer, prompts, responses, max_length)
     device = next(model.parameters()).device
     batch = {k: v.to(device) for k, v in batch.items()}
@@ -56,10 +56,10 @@ def compute_response_logprobs(model, tokenizer, prompts, responses, max_length):
         labels=batch["labels"]
     )
     
-    return compute_logp(outputs.logits, batch["labels"], reduction="none")
+    return compute_logp(outputs.logits, batch["labels"], reduction=reduction)
 
 def compute_sft_loss(model, tokenizer, prompts, responses, max_length):
-    logp = compute_response_logprobs(model, tokenizer, prompts, responses, max_length)
+    logp = compute_response_logprobs(model, tokenizer, prompts, responses, max_length, reduction="sum")
     return -1.0 * logp.mean()
 
 def evaluate(model, val_loader):
@@ -80,7 +80,7 @@ if __name__ == "__main__":
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=torch.float32)
+    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=torch.bfloat16)
     model.to(device)
 
     dataset = load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft")
@@ -88,9 +88,9 @@ if __name__ == "__main__":
     val_subset = dataset.shuffle(seed=42).select(range(TRAIN_EXAMPLES, TRAIN_EXAMPLES + VAL_EXAMPLES))
 
     print("Preprocessing datasets...")
-    train_dataset = train_subset.map(lambda example: (example["messages"][0]["content"], example["messages"][1]["content"]),
+    train_dataset = train_subset.map(lambda example: (apply_prompt_format(example["messages"][0]["content"]), example["messages"][1]["content"]),
                                      remove_columns=train_subset.column_names)
-    val_dataset = val_subset.map(lambda example: (example["messages"][0]["content"], example["messages"][1]["content"]),
+    val_dataset = val_subset.map(lambda example: (apply_prompt_format(example["messages"][0]["content"]), example["messages"][1]["content"]),
                                  remove_columns=val_subset.column_names)
 
     train_generator = torch.Generator().manual_seed(42)

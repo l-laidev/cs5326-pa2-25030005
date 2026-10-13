@@ -2,7 +2,10 @@ import json
 from pathlib import Path
 import torch
 from datasets import load_dataset
+import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from src.common import apply_prompt_format
 
 
 MODEL_ID = "Qwen/Qwen2.5-0.5B"
@@ -21,11 +24,7 @@ if __name__ == "__main__":
         instruction = example["instruction"]
 
         messages = [{"role": "user", "content": instruction}]
-        prompt = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
-        )
+        prompt = apply_prompt_format(messages, add_generation_prompt=True)
         inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
 
         with torch.no_grad(), torch.inference_mode():

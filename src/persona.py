@@ -3,6 +3,8 @@ from trl import DPOTrainer, DPOConfig
 from peft import LoraConfig, TaskType
 from datasets import load_dataset
 
+from common import apply_prompt_format
+
 
 def to_conversational(example):
     def _convert(msg, role):
@@ -14,9 +16,9 @@ def to_conversational(example):
         ]
     
     return {
-        "prompt": _convert(example["prompt"], "user"),
-        "chosen": _convert(example["chosen"], "assistant"),
-        "rejected": _convert(example["rejected"], "assistant"),
+        "prompt": apply_prompt_format(_convert(example["prompt"], "user"), add_generation_prompt=False),
+        "chosen": apply_prompt_format(_convert(example["chosen"], "assistant"), add_generation_prompt=False),
+        "rejected": apply_prompt_format(_convert(example["rejected"], "assistant"), add_generation_prompt=False),
     }
 
 if __name__ == "__main__":
@@ -30,7 +32,7 @@ if __name__ == "__main__":
     trainer = DPOTrainer(
         model="HuggingFaceTB/SmolLM2-360M-Instruct",
         processing_class=tokenizer,
-        train_dataset=dataset["train"],
+        train_dataset=dataset,
         # eval_dataset=...,
         peft_config=LoraConfig(
             task_type=TaskType.CAUSAL_LM,

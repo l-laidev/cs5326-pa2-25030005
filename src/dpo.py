@@ -74,6 +74,7 @@ def compute_dpo_loss(
     rejected_responses,
     beta,
     max_length,
+    reduction="sum",
 ):
     device = next(policy_model.parameters()).device
     chosen_batch, rejected_batch = build_dpo_batch(
@@ -94,8 +95,8 @@ def compute_dpo_loss(
         labels=rejected_batch["labels"]
     )
 
-    policy_chosen_logps = compute_logp(policy_chosen_outputs.logits, chosen_batch["labels"])
-    policy_rejected_logps = compute_logp(policy_rejected_outputs.logits, rejected_batch["labels"])
+    policy_chosen_logps = compute_logp(policy_chosen_outputs.logits, chosen_batch["labels"], reduction=reduction)
+    policy_rejected_logps = compute_logp(policy_rejected_outputs.logits, rejected_batch["labels"], reduction=reduction)
 
     with torch.no_grad():
         ref_chosen_outputs = reference_model(
@@ -109,19 +110,20 @@ def compute_dpo_loss(
             labels=rejected_batch["labels"]
         )
 
-        ref_chosen_logps = compute_logp(ref_chosen_outputs.logits, chosen_batch["labels"])
-        ref_rejected_logps = compute_logp(ref_rejected_outputs.logits, rejected_batch["labels"])
+        ref_chosen_logps = compute_logp(ref_chosen_outputs.logits, chosen_batch["labels"], reduction=reduction)
+        ref_rejected_logps = compute_logp(ref_rejected_outputs.logits, rejected_batch["labels"], reduction=reduction)
     
     rw = beta * (policy_chosen_logps - ref_chosen_logps)
     rl = beta * (policy_rejected_logps - ref_rejected_logps)
-    
-    return compute_dpo_loss_from_logps(
+    loss = compute_dpo_loss_from_logps(
         policy_chosen_logps,
         policy_rejected_logps,
         ref_chosen_logps,
         ref_rejected_logps,
-        beta
-    ), rw, rl
+        beta,
+    )
+    
+    return loss, rw, rl
 
 @torch.no_grad()
 def evaluate_dpo(policy_model, reference_model, tokenizer, val_loader, beta, max_length):

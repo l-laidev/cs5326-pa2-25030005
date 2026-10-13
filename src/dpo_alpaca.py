@@ -2,6 +2,7 @@ import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from common import apply_prompt_format
 from src.dpo import train_dpo
 
 
@@ -17,9 +18,9 @@ if __name__ == "__main__":
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    model = AutoModelForCausalLM.from_pretrained("./best_sft_checkpoint", torch_dtype=torch.float32)
-    ref = AutoModelForCausalLM.from_pretrained("./best_sft_checkpoint", torch_dtype=torch.float16)
-    for p in ref.parameters:
+    model = AutoModelForCausalLM.from_pretrained("./best_sft_checkpoint", torch_dtype=torch.bfloat16)
+    ref = AutoModelForCausalLM.from_pretrained("./best_sft_checkpoint", torch_dtype=torch.bfloat16)
+    for p in ref.parameters():
         p.requires_grad = False
     ref.eval()
     
@@ -29,6 +30,7 @@ if __name__ == "__main__":
     train_dataset = load_dataset("HuggingFaceH4/ultrafeedback_binarized", split="train")
     train_dataset = train_dataset.shuffle(seed=42).select(range(TRAIN_EXAMPLES))
     val_dataset = load_dataset("json", data_files="./outputs/alpaca_eval_baseline.json")
+    # TODO: alpaca eval has only 300 generations
     val_dataset = val_dataset.shuffle(seed=42).select(range(VAL_EXAMPLES))
     
     print("Preprocessing datasets...")
@@ -37,8 +39,7 @@ if __name__ == "__main__":
         chosen = example["chosen"][0]["content"]
         rejected = example["rejected"][0]["content"]
         
-        # TODO: consistent chat template
-        return prompt, chosen, rejected
+        return apply_prompt_format(prompt), chosen, rejected
     
     train_dataset = train_dataset.map(_preproc)
     
