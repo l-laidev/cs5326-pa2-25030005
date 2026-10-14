@@ -22,7 +22,7 @@ def to_conversational(example):
     }
 
 if __name__ == "__main__":
-    dataset = load_dataset("json", data_files="data/persona_lora/ramsay_style_preferences.json")
+    dataset = load_dataset("json", data_files="data/persona_lora/ramsay_style_preferences.json", split="train")
     dataset = dataset.map(to_conversational)
     
     tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/SmolLM2-360M-Instruct")

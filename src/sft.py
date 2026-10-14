@@ -8,7 +8,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, get_cosine_schedul
 from datasets import load_dataset
 from torch.optim import AdamW
 
-from src.common import apply_prompt_format, compute_logp, process_one_batch, save_ckpt, load_ckpt
+from src.common import DEVICE, apply_prompt_format, compute_logp, process_one_batch, save_ckpt, load_ckpt
 
 
 MODEL_ID = "Qwen/Qwen2.5-0.5B"
@@ -23,8 +23,6 @@ WEIGHT_DECAY = 0.1
 MAX_GRAD_NORM = 1.0
 EPOCHS = 1
 CKPT_INTERVAL = 100
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def build_sft_batch(tokenizer, prompts, responses, max_length):
@@ -80,8 +78,7 @@ if __name__ == "__main__":
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=torch.bfloat16)
-    model.to(device)
+    model = AutoModelForCausalLM.from_pretrained(MODEL_ID, dtype=torch.bfloat16).to(DEVICE)
 
     dataset = load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft")
     train_subset = dataset.shuffle(seed=42).select(range(TRAIN_EXAMPLES))

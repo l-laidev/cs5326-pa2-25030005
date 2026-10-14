@@ -5,47 +5,40 @@ from datasets import load_dataset
 import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from src.common import apply_prompt_format
+from src.common import DEVICE, apply_prompt_format, generate
 
 
 MODEL_ID = "Qwen/Qwen2.5-0.5B"
+
 if __name__ == "__main__":
-    eval_set = load_dataset("json", data_files="eval_sets/hh_rlhf_eval_300_seed42.json")
+    eval_set = load_dataset("json", data_files="eval_sets/hh_rlhf_eval_300_seed42.json", split="train")
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
-        torch_dtype=torch.bfloat16,
-        device_map="auto"
-    )
+        dtype=torch.bfloat16,
+    ).to(DEVICE)
 
     results = []
-    for idx, example in tqdm.tqdm(enumerate(eval_set), desc="Generating baseline responses"):
-        instruction = example["instruction"]
+    with torch.inference_mode():
+        for idx, example in tqdm.tqdm(enumerate(eval_set), total=len(eval_set), desc="Generating baseline responses"):
+            instruction = example["instruction"]
 
-        messages = [{"role": "user", "content": instruction}]
-        prompt = apply_prompt_format(messages, add_generation_prompt=True)
-        inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
+            messages = [{"role": "user", "content": instruction}]
+            prompt = apply_prompt_format(messages, add_generation_prompt=True)
+            
+            inputs, outputs = generate(model, tokenizer, prompt)
 
-        with torch.no_grad(), torch.inference_mode():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=512,
-                do_sample=False,
-                repetition_penalty=1.05,
-                pad_token_id=tokenizer.eos_token_id,
-            )
+            prompt_len = len(inputs.input_ids[0])
+            response = outputs[0][prompt_len:]
+            response = tokenizer.decode(response, skip_special_tokens=True)
 
-        prompt_len = len(inputs.input_ids[0])
-        response = outputs[0][prompt_len:]
-        response = tokenizer.decode(response, skip_special_tokens=True)
-
-        results.append({
-            "id": str(idx),
-            "instruction": instruction,
-            "output": response,
-            "generator": "qwen2.5-0.5b-base",
-        })
+            results.append({
+                "id": str(idx),
+                "instruction": instruction,
+                "output": response,
+                "generator": "qwen2.5-0.5b-base",
+            })
 
     base = Path("generations")
     base.mkdir(parents=True, exist_ok=True)

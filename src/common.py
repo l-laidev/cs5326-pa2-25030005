@@ -5,6 +5,8 @@ import torch
 import torch.nn.functional as F
 
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 def apply_prompt_format(messages, add_generation_prompt=True):
     SYSTEM = """<|im_start|>system
 You are a helpful assistant.<|im_end|>"""
@@ -22,7 +24,24 @@ You are a helpful assistant.<|im_end|>"""
 """
     generation_prompt = "\n<|im_start|>assistant\n" if add_generation_prompt else ""
     return SYSTEM + '\n' + formatted + generation_prompt
-        
+
+@torch.no_grad
+def generate(model, tokenizer, prompt):
+    inputs = tokenizer(
+        prompt,
+        max_length=256,
+        truncation=True,
+        padding="max_length",
+        return_tensors="pt",
+    ).to(model.device)
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=256,
+        do_sample=False,
+        repetition_penalty=1.05,
+        pad_token_id=tokenizer.eos_token_id,
+    )
+    return inputs, outputs
 
 def process_one_batch(tokenizer, formatted_prompt_text, response, max_length):
     eos = tokenizer.eos_token if tokenizer.eos_token else ""
