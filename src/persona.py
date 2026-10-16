@@ -3,7 +3,10 @@ from trl import DPOTrainer, DPOConfig
 from peft import LoraConfig, TaskType
 from datasets import load_dataset
 
-from common import apply_prompt_format
+from src.common import apply_prompt_format
+
+
+VAL_EXAMPLES = 0
 
 
 def to_conversational(example):
@@ -15,30 +18,40 @@ def to_conversational(example):
             }
         ]
     
+    # return {
+    #     "prompt": apply_prompt_format(_convert(example["prompt"], "user"), add_generation_prompt=False),
+    #     "chosen": apply_prompt_format(_convert(example["chosen"], "assistant"), add_generation_prompt=False),
+    #     "rejected": apply_prompt_format(_convert(example["rejected"], "assistant"), add_generation_prompt=False),
+    # }
     return {
-        "prompt": apply_prompt_format(_convert(example["prompt"], "user"), add_generation_prompt=False),
-        "chosen": apply_prompt_format(_convert(example["chosen"], "assistant"), add_generation_prompt=False),
-        "rejected": apply_prompt_format(_convert(example["rejected"], "assistant"), add_generation_prompt=False),
+        "prompt": _convert(example["prompt"], "user"),
+        "chosen": _convert(example["chosen"], "assistant"),
+        "rejected": _convert(example["rejected"], "assistant"),
     }
 
 if __name__ == "__main__":
     dataset = load_dataset("json", data_files="data/persona_lora/ramsay_style_preferences.json", split="train")
-    dataset = dataset.map(to_conversational)
+    dataset = dataset.map(to_conversational).shuffle(seed=42)
+
+    total = len(dataset)
+    train_dataset = dataset.select(range(total - VAL_EXAMPLES))
+    # val_dataset = dataset.select(range(total - VAL_EXAMPLES, total))
     
     tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/SmolLM2-360M-Instruct")
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    
+
+    lora_rank = 8
     trainer = DPOTrainer(
         model="HuggingFaceTB/SmolLM2-360M-Instruct",
         processing_class=tokenizer,
-        train_dataset=dataset,
-        # eval_dataset=...,
+        train_dataset=train_dataset,
+        # eval_dataset=val_dataset,
         peft_config=LoraConfig(
             task_type=TaskType.CAUSAL_LM,
-            r=8,
-            target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
-            lora_alpha=8,
+            r=lora_rank,
+            target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],  # qkvo -> qv, 0.3575 -> 0.4410 (worse)
+            lora_alpha=2*lora_rank,  # 8 -> 16, 0.4675 -> 0.3575
             lora_dropout=0.05,
         ),
         args=DPOConfig(
@@ -46,11 +59,11 @@ if __name__ == "__main__":
             
             # eval_strategy="steps",
             # eval_steps=100,
-            # include_num_input_tokens_seen="non_padding",
+            include_num_input_tokens_seen="non_padding",
             
-            save_strategy="steps",
-            save_steps=100,
-            load_best_model_at_end=True,
+            # save_strategy="steps",
+            # save_steps=100,
+            # load_best_model_at_end=True,
             
             seed=42,
             bf16=True,
@@ -58,21 +71,19 @@ if __name__ == "__main__":
             num_train_epochs=1,
             beta=0.1,
             
-            per_device_train_batch_size=1,
-            per_device_eval_batch_size=1,
-            gradient_accumulation_steps=32,
+            per_device_train_batch_size=32,
+            per_device_eval_batch_size=32,
             
-            learning_rate=1e-6,
+            learning_rate=1e-3,  # 1e-6 -> 1e-3, loss: 0.6943 -> 0.4761
             lr_scheduler_type="constant",
             max_grad_norm=1.0,
             
             optim="adamw_torch",
-            weight_decay=0.1,
-            adam_beta1=0.9,
-            adam_beta2=0.999,
+            weight_decay=1.1,  # 0.1 -> 1.1, 0.4678 -> 0.4675
+            adam_beta1=0.5,  # 0.9 -> 0.8 -> 0.5, 0.4761 -> 0.4749 -> 0.4678
+            adam_beta2=0.555,  # 0.999 -> 0.888 -> 0.555, 0.4761 -> 0.4749 -> 0.4678
         )
     )
     
     trainer.train()
     trainer.save_model("./best_ramsay_checkpoint")
- 
