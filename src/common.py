@@ -9,7 +9,11 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 def apply_prompt_format(messages, add_generation_prompt=True):
     SYSTEM = """<|im_start|>system
-You are a helpful assistant.<|im_end|>"""
+You are a helpful assistant.<|im_end|>
+"""
+
+    if isinstance(messages, str):
+        messages = [messages]
 
     formatted = ""
     for msg in messages:
@@ -22,16 +26,15 @@ You are a helpful assistant.<|im_end|>"""
         formatted += f"""<|im_start|>{role}
 {content}<|im_end|>
 """
-    generation_prompt = "\n<|im_start|>assistant\n" if add_generation_prompt else ""
-    return SYSTEM + '\n' + formatted + generation_prompt
+    generation_prompt = "<|im_start|>assistant" if add_generation_prompt else ""
+    return SYSTEM + formatted + generation_prompt
 
 @torch.no_grad
 def generate(model, tokenizer, prompt):
     inputs = tokenizer(
         prompt,
-        max_length=256,
+        max_length=512,
         truncation=True,
-        padding="max_length",
         return_tensors="pt",
     ).to(model.device)
     outputs = model.generate(
@@ -76,10 +79,15 @@ def compute_logp(logits, labels, reduction: Literal["none"] | Literal["sum"] = "
         shift_logits.retain_grad()
     
     mask = (shift_labels == -100)
-    shift_labels[mask] = 0  # pick the first one, will be discarded
+    tmp_unmasked_labels = torch.where(
+        mask,
+        # pick the first index for masked tokens, they will be discarded anyway
+        torch.tensor(0, device=shift_labels.device, dtype=shift_labels.dtype),
+        shift_labels,
+    )
     
     log_probs = F.log_softmax(shift_logits, dim=-1)
-    token_log_probs = log_probs.gather(-1, shift_labels.unsqueeze(-1)).squeeze(-1)
+    token_log_probs = log_probs.gather(-1, tmp_unmasked_labels.unsqueeze(-1)).squeeze(-1)
     
     token_log_probs = token_log_probs * (~mask)
     
@@ -101,6 +109,7 @@ def save_ckpt(
     best_metric: float,
     path: Path,
     scheduler: torch.optim.lr_scheduler.LambdaLR | None = None,
+    metrics: dict | None = None,
 ):
     path.parent.mkdir(parents=True, exist_ok=True)
     
@@ -113,6 +122,7 @@ def save_ckpt(
             "resume_step": resume_step,
             "best_metric": best_metric,
             "scheduler": scheduler.state_dict() if scheduler is not None else None,
+            "metrics": metrics,
         },
         path
     )
@@ -123,7 +133,7 @@ def load_ckpt(
     train_generator: torch.Generator,
     path: Path,
     scheduler: torch.optim.lr_scheduler.LambdaLR | None = None,
-) -> int:
+):
     assert path.exists()
     
     states = torch.load(path)
@@ -134,4 +144,4 @@ def load_ckpt(
     if scheduler is not None:
         scheduler.load_state_dict(states["scheduler"])
     
-    return states["global_step"], states["resume_step"], states["best_metric"]
+    return states["global_step"], states["resume_step"], states["best_metric"], states["metrics"]

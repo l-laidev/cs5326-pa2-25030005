@@ -9,7 +9,7 @@ from datasets import load_dataset
 import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from common import DEVICE, apply_prompt_format, generate
+from src.common import DEVICE, apply_prompt_format, generate
 
 
 MODEL_ID = "Qwen/Qwen2.5-0.5B"
@@ -33,7 +33,11 @@ if __name__ == "__main__":
     
     
     def _preproc(example):
-        return example["id"], apply_prompt_format(example["instruction"]), example["output"]
+        return {
+            "id": example["id"],
+            "instruction": apply_prompt_format(example["instruction"]),
+            "baseline": example["output"],
+        }
     
     if args.dataset == "alpaca":
         dataset = load_dataset("json", data_files="generations/alpaca_eval_baseline.json", split="train")
@@ -48,7 +52,9 @@ if __name__ == "__main__":
     print("Starting generation...")
     results = []
     with torch.no_grad(), torch.inference_mode():
-        for idx, (id, instruction, baseline_response) in tqdm.tqdm(enumerate(dataset), total=len(dataset), desc="Generating"):
+        for idx, batch in tqdm.tqdm(enumerate(dataset), total=len(dataset), desc="Generating"):
+            id, instruction, baseline_response = batch["id"], batch["instruction"], batch["baseline"]
+
             inputs, outputs = generate(model, tokenizer, instruction)
         
             prompt_len = len(inputs.input_ids[0])
