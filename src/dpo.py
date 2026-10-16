@@ -1,3 +1,5 @@
+import itertools
+import json
 from pathlib import Path
 
 import torch
@@ -17,7 +19,9 @@ BETA = 0.1
 WEIGHT_DECAY = 0.1
 MAX_GRAD_NORM = 1.0
 EPOCHS = 1
-CKPT_INTERVAL = 100
+VAL_STEPS = 50
+CKPT_INTERVAL = 500
+MAX_STEPS = 500
 
 def build_dpo_batch(
     tokenizer,
@@ -135,8 +139,8 @@ def evaluate_dpo(policy_model, reference_model, tokenizer, val_loader, beta, max
     all_rl = []
     device = next(policy_model.parameters()).device
 
-    for batch in tqdm.tqdm(val_loader, total=len(val_loader), desc="Evaluating"):
-        prompts, chosen_responses, rejected_responses = batch
+    for batch in tqdm.tqdm(val_loader, total=len(val_loader), desc="Evaluating", leave=False):
+        prompts, chosen_responses, rejected_responses = batch["prompt"], batch["chosen"], batch["rejected"]
         
         chosen_batch, rejected_batch = build_dpo_batch(
             tokenizer,
@@ -180,33 +184,45 @@ def train_dpo(model, ref, tokenizer, train_dataset, val_dataset, name):
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     total_steps = (len(train_loader) // GRADIENT_ACCUMULATION_STEPS) * EPOCHS
     
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler("cuda")
     
     print("Starting training...")
     best_rw_acc = float("-inf")
     global_step = 0
     resume_step = 0
+    metrics = {"train_loss": [], "train_rw_acc": [], "train_rw_margin": [],
+               "val_loss": [], "val_rw_acc": [], "val_rw_margin": []}
     ckpt_path = Path("checkpoints") / "dpo" / name / "state.pt"
+    loader_iter = train_loader
     
     if ckpt_path.exists():
-        global_step, resume_step, best_rw_acc = load_ckpt(
+        global_step, resume_step, best_rw_acc, metrics = load_ckpt(
             model,
             optimizer,
             train_generator,
             ckpt_path,
         )
+
+        if resume_step > 0:
+            loader_iter = itertools.islice(train_loader, resume_step, None)
     
     for epoch in (t1 := tqdm.trange(EPOCHS, desc="Epochs")):
         model.train()
         optimizer.zero_grad()
         
         step = resume_step
-        for batch in (t2 := tqdm.tqdm(train_loader, initial=resume_step, total=len(train_loader), desc="Step", leave=False)):
+        for batch in (t2 := tqdm.tqdm(loader_iter, initial=resume_step, total=len(train_loader), desc="Step", leave=False)):
             step += 1
             
-            prompts, chosens, rejecteds = batch
-            with torch.cuda.amp.autocast(dtype=torch.float16):
-                loss = compute_dpo_loss(model, ref, tokenizer, prompts, chosens, rejecteds, BETA, MAX_LENGTH)
+            prompts, chosens, rejecteds = batch["prompt"], batch["chosen"], batch["rejected"]
+            with torch.amp.autocast("cuda", dtype=torch.float16):
+                loss, rw_acc, rw_margin = compute_dpo_loss(model, ref, tokenizer, prompts, chosens, rejecteds, BETA, MAX_LENGTH)
+                
+                # plotting code will deal with accumulation etc
+                metrics["train_loss"].append(loss.item())
+                metrics["train_rw_acc"].append(rw_acc.item())
+                metrics["train_rw_margin"].append(rw_margin.item())
+                
                 loss /= GRADIENT_ACCUMULATION_STEPS
             scaler.scale(loss).backward()
             
@@ -223,27 +239,38 @@ def train_dpo(model, ref, tokenizer, train_dataset, val_dataset, name):
                 if global_step % 100 == 0:
                     t2.set_description_str(f"Epoch {epoch+1} | Step {global_step}/{total_steps} | Loss: {loss.item() * GRADIENT_ACCUMULATION_STEPS:.4f}")
                 
-                if global_step % CKPT_INTERVAL == 0:
-                    save_ckpt(
-                        model,
-                        optimizer,
-                        train_generator,
-                        global_step,
-                        step,
-                        best_rw_acc,
-                        ckpt_path,
-                        None,
-                    )
-        
-        val_loss, rw_acc, rw_margin = evaluate_dpo(model, ref, tokenizer, val_loader, BETA, MAX_LENGTH)
-        t1.set_description_str(f"Epoch {epoch+1} Complete. Validation Loss: {val_loss:.4f}, Reward Accuracy: {rw_acc:.4f}, Reward Margin: {rw_margin:.4f}")
-        
-        if rw_acc > best_rw_acc:
-            best_rw_acc = rw_acc
-            model.save_pretrained(f"./best_{name}_checkpoint")
-            tokenizer.save_pretrained(f"./best_{name}_checkpoint")
-            t1.set_description_str("Saved best checkpoint.")
+            if step % CKPT_INTERVAL == 0:
+                save_ckpt(
+                    model,
+                    optimizer,
+                    train_generator,
+                    global_step,
+                    step,
+                    best_rw_acc,
+                    ckpt_path,
+                    None,
+                    metrics,
+                )
 
-    model.save_pretrained(f"./final_{name}_checkpoint")
-    tokenizer.save_pretrained(f"./final_{name}_checkpoint")
+            if step == 1 or step % VAL_STEPS == 0 or step == len(train_loader):
+                val_loss, rw_acc, rw_margin = evaluate_dpo(model, ref, tokenizer, val_loader, BETA, MAX_LENGTH)
+                metrics["val_loss"].append(val_loss)
+                metrics["val_rw_acc"].append(rw_acc)
+                metrics["val_rw_margin"].append(rw_margin)
+                t1.set_description_str(f"[Step {step:04}] Validation Loss: {val_loss:.4f}, Reward Accuracy: {rw_acc:.4f}, Reward Margin: {rw_margin:.4f}")
+                
+                if rw_acc > best_rw_acc:
+                    best_rw_acc = rw_acc
+                    model.save_pretrained(f"./checkpoints/best/dpo/{name}")
+                    tokenizer.save_pretrained(f"./checkpoints/best/dpo/{name}")
+
+                t1.set_description_str(f"[Step {step:04}] Validation Loss: {val_loss:.4f}, Reward Accuracy: {rw_acc:.4f} (best {best_rw_acc:.4f}), Reward Margin: {rw_margin:.4f}")
+
+            if step == MAX_STEPS:
+                break
+
+    model.save_pretrained(f"./checkpoints/final/dpo/{name}")
+    tokenizer.save_pretrained(f"./checkpoints/final/dpo/{name}")
+    with open(f"./checkpoints/final/dpo/{name}/metrics.json", "w") as f:
+            f.write(json.dumps(metrics))
     print("Training complete. Final checkpoint saved.")
