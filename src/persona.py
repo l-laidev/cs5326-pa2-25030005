@@ -1,3 +1,5 @@
+import json
+
 from transformers import AutoTokenizer
 from trl import DPOTrainer, DPOConfig
 from peft import LoraConfig, TaskType
@@ -66,3 +68,6 @@ if __name__ == "__main__":
     
     trainer.train()
     trainer.save_model("./checkpoints/final/persona/ramsay_checkpoint")
+
+    with open("./checkpoints/final/persona/ramsay_checkpoint/metrics.json", "w") as f:
+        f.write(json.dumps(trainer.state.log_history))
