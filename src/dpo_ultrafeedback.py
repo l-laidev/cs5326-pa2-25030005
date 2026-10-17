@@ -53,4 +53,4 @@ if __name__ == "__main__":
     train_dataset = train_dataset.map(_preproc, remove_columns=train_dataset.column_names)
     val_dataset = val_dataset.map(_preproc, remove_columns=val_dataset.column_names)
     
-    train_dpo(model, ref, tokenizer, train_dataset, val_dataset, f"alpaca_{args.run_name}")
+    train_dpo(model, ref, tokenizer, train_dataset, val_dataset, f"ultrafeedback_{args.run_name}")
