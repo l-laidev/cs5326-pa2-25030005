@@ -155,7 +155,7 @@ if __name__ == "__main__":
             })
         
         prompt = prepare_prompt(pairs)
-        judged = perform_judgement.run(llm=kbench.llms[args.judge], prompt=prompt, retries=args.retries)
+        judged = perform_judgement.run(llm=kbench.llms[args.judge], prompt=prompt, n_retries=args.retries)
         
         if judged is not None:
             for i in range(len(A)):
