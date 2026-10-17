@@ -21,10 +21,7 @@ def to_conversational(example):
 
 if __name__ == "__main__":
     dataset = load_dataset("json", data_files="data/persona_lora/ramsay_style_preferences.json", split="train")
-    dataset = dataset.map(to_conversational).shuffle(seed=42)
-
-    total = len(dataset)
-    train_dataset = dataset.select(range(total - VAL_EXAMPLES))
+    train_dataset = dataset.map(to_conversational).shuffle(seed=42)
     
     tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/SmolLM2-360M-Instruct")
     if tokenizer.pad_token is None:

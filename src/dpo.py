@@ -7,21 +7,21 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import tqdm
 
-from src.common import compute_logp, process_one_batch, load_ckpt, save_ckpt
+from src.common import compute_logp, find_max_length_within_batch, process_one_batch, load_ckpt, save_ckpt
 
 
 MAX_LENGTH = 512
 MAX_PROMPT_LENGTH = 256
-PER_DEVICE_BATCH_SIZE = 1
+PER_DEVICE_BATCH_SIZE = 2
 VAL_PER_DEVICE_BATCH_SIZE = 2
-GRADIENT_ACCUMULATION_STEPS = 32
+GRADIENT_ACCUMULATION_STEPS = 16
 LEARNING_RATE = 1e-6
 BETA = 0.1
 WEIGHT_DECAY = 0.1
 MAX_GRAD_NORM = 1.0
 EPOCHS = 1
-VAL_STEPS = 250
-CKPT_INTERVAL = 2_000
+VAL_STEPS = 5_000
+CKPT_INTERVAL = 1_500
 MAX_STEPS = float("inf")
 
 def build_dpo_batch(
@@ -31,16 +31,19 @@ def build_dpo_batch(
     rejected_responses,
     max_length,
 ):
+    chosen_max_len_within_batch = find_max_length_within_batch(tokenizer, prompts, chosen_responses, max_length)
+    rejected_max_len_within_batch = find_max_length_within_batch(tokenizer, prompts, rejected_responses, max_length)
+    
     chosen_ids, chosen_masks, chosen_labels = [], [], []
     rejected_ids, rejected_masks, rejected_labels = [], [], []
 
     for prompt, chosen, rejected in zip(prompts, chosen_responses, rejected_responses):
-        c_id, c_mask, c_lbl = process_one_batch(tokenizer, prompt, chosen, max_length)
+        c_id, c_mask, c_lbl = process_one_batch(tokenizer, prompt, chosen, chosen_max_len_within_batch)
         chosen_ids.append(c_id)
         chosen_masks.append(c_mask)
         chosen_labels.append(c_lbl)
 
-        r_id, r_mask, r_lbl = process_one_batch(tokenizer, prompt, rejected, max_length)
+        r_id, r_mask, r_lbl = process_one_batch(tokenizer, prompt, rejected, rejected_max_len_within_batch)
         rejected_ids.append(r_id)
         rejected_masks.append(r_mask)
         rejected_labels.append(r_lbl)

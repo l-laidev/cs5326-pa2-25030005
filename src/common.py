@@ -46,6 +46,18 @@ def generate(model, tokenizer, prompt):
     )
     return inputs, outputs
 
+def find_max_length_within_batch(tokenizer, prompts, responses, max_length):
+    max_len_within_batch = -1
+    for prompt, response in zip(prompts, responses):
+        eos = tokenizer.eos_token if tokenizer.eos_token else ""
+        full_text = prompt + response + eos
+        
+        prompt_ids = tokenizer(full_text).input_ids
+        prompt_len = min(len(prompt_ids), max_length)
+        max_len_within_batch = max(max_len_within_batch, prompt_len)
+    
+    return max_len_within_batch
+
 def process_one_batch(tokenizer, formatted_prompt_text, response, max_length):
     eos = tokenizer.eos_token if tokenizer.eos_token else ""
     full_text = formatted_prompt_text + response + eos

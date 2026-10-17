@@ -11,7 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, get_cosine_schedul
 from datasets import load_dataset
 from torch.optim import AdamW
 
-from src.common import DEVICE, apply_prompt_format, compute_logp, process_one_batch, save_ckpt, load_ckpt
+from src.common import DEVICE, apply_prompt_format, compute_logp, find_max_length_within_batch, process_one_batch, save_ckpt, load_ckpt
 
 
 MODEL_ID = "Qwen/Qwen2.5-0.5B"
@@ -31,12 +31,14 @@ MAX_STEPS = float("inf")
 
 
 def build_sft_batch(tokenizer, prompts, responses, max_length):
+    max_len_within_batch = find_max_length_within_batch(tokenizer, prompts, responses, max_length)
+    
     batch_input_ids = []
     batch_attention_mask = []
     batch_labels = []
 
     for prompt, response in zip(prompts, responses):
-        input_ids, attention_mask, labels = process_one_batch(tokenizer, prompt, response, max_length)
+        input_ids, attention_mask, labels = process_one_batch(tokenizer, prompt, response, max_len_within_batch)
 
         batch_input_ids.append(input_ids)
         batch_attention_mask.append(attention_mask)
