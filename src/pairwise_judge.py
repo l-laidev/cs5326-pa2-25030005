@@ -1,8 +1,10 @@
 from argparse import ArgumentParser
+from dataclasses import dataclass
 import json
 from pathlib import Path
 import random
 import time
+from typing import Literal
 import kaggle_benchmarks as kbench
 import tqdm
 
@@ -31,14 +33,18 @@ class Arguments:
     reuse: bool
     name: str
 
+@dataclass
+class JudgeResponse:
+    judgements: list[Literal["A"] | Literal["B"] | Literal["Tie"]]
 
 def prepare_prompt(pairs):
     def _format_one(idx):
         rA = pairs[idx]["resA"]
         rB = pairs[idx]["resB"]
+        ins = pairs[idx]["instr"]
         return f"""
 ####### PAIR {idx+1}
-User's Query: {i}
+User's Query: {ins}
 
 Response A: {rA}
 
@@ -56,23 +62,12 @@ Response B: {rB}
 ####### Your Response
 """
 
-def perform_judgement(prompt, model_name, n_retries):
+@kbench.task(name="judge_two_responses")
+def perform_judgement(llm, prompt, n_retries):
     for attempt in range(n_retries):
         try:
-            response = kbench.client.generate(model=model_name, prompt=prompt)
-            text = response.text if hasattr(response, "text") else str(response)
-            
-            clean_text = text.strip()
-            if clean_text.startswith("```json"):
-                clean_text = clean_text[7:]
-            if clean_text.startswith("```"):
-                clean_text = clean_text[3:]
-            if clean_text.endswith("```"):
-                clean_text = clean_text[:-3]
-            
-            judged_list = json.loads(clean_text.strip())
-            if isinstance(judged_list, list):
-                return judged_list
+            response: JudgeResponse = llm.prompt(prompt, schema=JudgeResponse)
+            return response.judgements
         except Exception as e:
             print(f"Attempt {attempt + 1}/{n_retries} failed with error: {e}")
             time.sleep(3 * (attempt + 1))
@@ -147,6 +142,9 @@ if __name__ == "__main__":
             
             idA = srcA[pair]["model"]
             idB = srcB[pair]["model"]
+
+            # ensure instructions are the exact same
+            assert A[pair]["instruction"] == B[pair]["instruction"]
             
             pairs.append({
                 "instr": A[pair]["instruction"],
@@ -157,7 +155,7 @@ if __name__ == "__main__":
             })
         
         prompt = prepare_prompt(pairs)
-        judged = perform_judgement(prompt, args.judge, args.retries)
+        judged = perform_judgement.run(llm=kbench.llms[args.judge], prompt=prompt, retries=args.retries)
         
         if judged is not None:
             for i in range(len(A)):
