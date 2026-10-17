@@ -3,11 +3,6 @@ from trl import DPOTrainer, DPOConfig
 from peft import LoraConfig, TaskType
 from datasets import load_dataset
 
-from src.common import apply_prompt_format
-
-
-VAL_EXAMPLES = 0
-
 
 def to_conversational(example):
     def _convert(msg, role):
@@ -18,11 +13,6 @@ def to_conversational(example):
             }
         ]
     
-    # return {
-    #     "prompt": apply_prompt_format(_convert(example["prompt"], "user"), add_generation_prompt=False),
-    #     "chosen": apply_prompt_format(_convert(example["chosen"], "assistant"), add_generation_prompt=False),
-    #     "rejected": apply_prompt_format(_convert(example["rejected"], "assistant"), add_generation_prompt=False),
-    # }
     return {
         "prompt": _convert(example["prompt"], "user"),
         "chosen": _convert(example["chosen"], "assistant"),
@@ -35,7 +25,6 @@ if __name__ == "__main__":
 
     total = len(dataset)
     train_dataset = dataset.select(range(total - VAL_EXAMPLES))
-    # val_dataset = dataset.select(range(total - VAL_EXAMPLES, total))
     
     tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/SmolLM2-360M-Instruct")
     if tokenizer.pad_token is None:
@@ -46,7 +35,6 @@ if __name__ == "__main__":
         model="HuggingFaceTB/SmolLM2-360M-Instruct",
         processing_class=tokenizer,
         train_dataset=train_dataset,
-        # eval_dataset=val_dataset,
         peft_config=LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             r=lora_rank,
@@ -57,13 +45,7 @@ if __name__ == "__main__":
         args=DPOConfig(
             output_dir="checkpoints/dpo/ramsay",
             
-            # eval_strategy="steps",
-            # eval_steps=100,
             include_num_input_tokens_seen="non_padding",
-            
-            # save_strategy="steps",
-            # save_steps=100,
-            # load_best_model_at_end=True,
             
             seed=42,
             bf16=True,
@@ -86,4 +68,4 @@ if __name__ == "__main__":
     )
     
     trainer.train()
-    trainer.save_model("./best_ramsay_checkpoint")
+    trainer.save_model("./checkpoints/final/persona/ramsay_checkpoint")

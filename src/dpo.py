@@ -13,15 +13,16 @@ from src.common import compute_logp, process_one_batch, load_ckpt, save_ckpt
 MAX_LENGTH = 512
 MAX_PROMPT_LENGTH = 256
 PER_DEVICE_BATCH_SIZE = 1
+VAL_PER_DEVICE_BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 32
 LEARNING_RATE = 1e-6
 BETA = 0.1
 WEIGHT_DECAY = 0.1
 MAX_GRAD_NORM = 1.0
 EPOCHS = 1
-VAL_STEPS = 50
-CKPT_INTERVAL = 500
-MAX_STEPS = 500
+VAL_STEPS = 250
+CKPT_INTERVAL = 2_000
+MAX_STEPS = float("inf")
 
 def build_dpo_batch(
     tokenizer,
@@ -131,8 +132,8 @@ def compute_dpo_loss(
 
 @torch.no_grad()
 def evaluate_dpo(policy_model, reference_model, tokenizer, val_loader, beta, max_length):
+    was_train = policy_model.training
     policy_model.eval()
-    reference_model.eval()
     
     total_loss = 0.0
     all_rw = []
@@ -174,12 +175,14 @@ def evaluate_dpo(policy_model, reference_model, tokenizer, val_loader, beta, max
     reward_margin = (all_rw - all_rl).mean().item()
     mean_val_loss = total_loss / len(val_loader)
 
+    if was_train:
+        policy_model.train()
     return mean_val_loss, reward_accuracy, reward_margin
 
 def train_dpo(model, ref, tokenizer, train_dataset, val_dataset, name):
     train_generator = torch.Generator().manual_seed(42)
     train_loader = DataLoader(train_dataset, batch_size=PER_DEVICE_BATCH_SIZE, shuffle=True, generator=train_generator)
-    val_loader = DataLoader(val_dataset, batch_size=PER_DEVICE_BATCH_SIZE)
+    val_loader = DataLoader(val_dataset, batch_size=VAL_PER_DEVICE_BATCH_SIZE)
     
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     total_steps = (len(train_loader) // GRADIENT_ACCUMULATION_STEPS) * EPOCHS
@@ -213,10 +216,12 @@ def train_dpo(model, ref, tokenizer, train_dataset, val_dataset, name):
         step = resume_step
         for batch in (t2 := tqdm.tqdm(loader_iter, initial=resume_step, total=len(train_loader), desc="Step", leave=False)):
             step += 1
-            
+
             prompts, chosens, rejecteds = batch["prompt"], batch["chosen"], batch["rejected"]
             with torch.amp.autocast("cuda", dtype=torch.float16):
-                loss, rw_acc, rw_margin = compute_dpo_loss(model, ref, tokenizer, prompts, chosens, rejecteds, BETA, MAX_LENGTH)
+                loss, rw, rl = compute_dpo_loss(model, ref, tokenizer, prompts, chosens, rejecteds, BETA, MAX_LENGTH)
+                rw_acc = (rw > rl).float().mean()
+                rw_margin = (rw - rl).mean()
                 
                 # plotting code will deal with accumulation etc
                 metrics["train_loss"].append(loss.item())
@@ -226,7 +231,7 @@ def train_dpo(model, ref, tokenizer, train_dataset, val_dataset, name):
                 loss /= GRADIENT_ACCUMULATION_STEPS
             scaler.scale(loss).backward()
             
-            if step % GRADIENT_ACCUMULATION_STEPS == 0 or step == len(train_loader):
+            if step % GRADIENT_ACCUMULATION_STEPS == 0 or step == len(train_loader) or step >= MAX_STEPS:
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
                 
@@ -252,7 +257,7 @@ def train_dpo(model, ref, tokenizer, train_dataset, val_dataset, name):
                     metrics,
                 )
 
-            if step == 1 or step % VAL_STEPS == 0 or step == len(train_loader):
+            if step == 1 or step % VAL_STEPS == 0 or step == len(train_loader) or step >= MAX_STEPS:
                 val_loss, rw_acc, rw_margin = evaluate_dpo(model, ref, tokenizer, val_loader, BETA, MAX_LENGTH)
                 metrics["val_loss"].append(val_loss)
                 metrics["val_rw_acc"].append(rw_acc)
@@ -266,7 +271,7 @@ def train_dpo(model, ref, tokenizer, train_dataset, val_dataset, name):
 
                 t1.set_description_str(f"[Step {step:04}] Validation Loss: {val_loss:.4f}, Reward Accuracy: {rw_acc:.4f} (best {best_rw_acc:.4f}), Reward Margin: {rw_margin:.4f}")
 
-            if step == MAX_STEPS:
+            if step >= MAX_STEPS:
                 break
 
     model.save_pretrained(f"./checkpoints/final/dpo/{name}")

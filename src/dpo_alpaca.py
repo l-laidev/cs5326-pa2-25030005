@@ -22,8 +22,8 @@ if __name__ == "__main__":
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    model = AutoModelForCausalLM.from_pretrained("./best_sft_checkpoint", dtype=torch.float32).to(DEVICE)
-    ref = AutoModelForCausalLM.from_pretrained("./best_sft_checkpoint", dtype=torch.bfloat16).to(DEVICE)
+    model = AutoModelForCausalLM.from_pretrained("./checkpoints/best/sft/final-run", dtype=torch.float32).to(DEVICE)
+    ref = AutoModelForCausalLM.from_pretrained("./checkpoints/best/sft/final-run", dtype=torch.bfloat16).to(DEVICE)
     for p in ref.parameters():
         p.requires_grad = False
     ref.eval()
@@ -35,9 +35,14 @@ if __name__ == "__main__":
     
     print("Preprocessing datasets...")
     def _preproc(example):
+        def _extract_first_assistant(messages):
+            for msg in messages:
+                if msg["role"] == "assistant":
+                    return msg["content"]
+
         prompt = example["prompt"]
-        chosen = example["chosen"][0]["content"]
-        rejected = example["rejected"][0]["content"]
+        chosen = _extract_first_assistant(example["chosen"])
+        rejected = _extract_first_assistant(example["rejected"])
         
         return {
             "prompt": apply_prompt_format(prompt),
@@ -45,7 +50,7 @@ if __name__ == "__main__":
             "rejected": rejected,
         }
     
-    train_dataset = train_dataset.map(_preproc)
-    val_dataset = val_dataset.map(_preproc)
+    train_dataset = train_dataset.map(_preproc, remove_columns=train_dataset.column_names)
+    val_dataset = val_dataset.map(_preproc, remove_columns=val_dataset.column_names)
     
     train_dpo(model, ref, tokenizer, train_dataset, val_dataset, f"alpaca_{args.run_name}")

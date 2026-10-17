@@ -20,14 +20,14 @@ TRAIN_EXAMPLES = 30_000
 VAL_EXAMPLES = 1_000
 PER_DEVICE_BATCH_SIZE = 2
 GRADIENT_ACCUMULATION_STEPS = 16
-LEARNING_RATE = 2e-5
-WARMUP_RATIO = 0.03
+LEARNING_RATE = 5e-6
+WARMUP_RATIO = 0.05
 WEIGHT_DECAY = 0.1
-MAX_GRAD_NORM = 1.0
+MAX_GRAD_NORM = 0.01
 EPOCHS = 1
-VAL_STEPS = 50
-CKPT_INTERVAL = 500
-MAX_STEPS = 250
+VAL_STEPS = 250
+CKPT_INTERVAL = 2_000
+MAX_STEPS = float("inf")
 
 
 def build_sft_batch(tokenizer, prompts, responses, max_length):
@@ -66,6 +66,7 @@ def compute_sft_loss(model, tokenizer, prompts, responses, max_length):
     return -1.0 * logp.mean()
 
 def evaluate(model, val_loader):
+    was_train = model.training
     model.eval()
     total_loss = 0.0
     with torch.no_grad(), torch.inference_mode():
@@ -75,6 +76,8 @@ def evaluate(model, val_loader):
             with torch.amp.autocast("cuda", dtype=torch.float16):
                 loss = compute_sft_loss(model, tokenizer, prompts, responses, MAX_LENGTH)
             total_loss += loss.item()
+    if was_train:
+        model.train()
     return total_loss / len(val_loader)
 
 
@@ -150,7 +153,7 @@ if __name__ == "__main__":
 
             scaler.scale(loss).backward()
 
-            if step % GRADIENT_ACCUMULATION_STEPS == 0 or step == len(train_loader):
+            if step % GRADIENT_ACCUMULATION_STEPS == 0 or step == len(train_loader) or step >= MAX_STEPS:
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
 
@@ -183,7 +186,7 @@ if __name__ == "__main__":
                     losses,
                 )
 
-            if step == 1 or step % VAL_STEPS == 0 or step == len(train_loader):
+            if step == 1 or step % VAL_STEPS == 0 or step == len(train_loader) or step >= MAX_STEPS:
                 val_loss = evaluate(model, val_loader)
                 losses["val"].append(val_loss)
 

@@ -60,8 +60,8 @@ def process_one_batch(tokenizer, formatted_prompt_text, response, max_length):
     input_ids = encoded.input_ids[0]
     attention_mask = encoded.attention_mask[0]
 
-    prompt_encoded = tokenizer(formatted_prompt_text, max_length=max_length, truncation=True, return_tensors="pt")
-    prompt_len = len(prompt_encoded.input_ids[0])
+    prompt_ids = tokenizer(formatted_prompt_text).input_ids
+    prompt_len = min(len(prompt_ids), max_length)
 
     # response-only masking with -100
     labels = input_ids.clone()
