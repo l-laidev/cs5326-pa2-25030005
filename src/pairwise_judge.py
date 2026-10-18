@@ -77,19 +77,20 @@ def perform_judgement(llm, prompt, n_retries) -> dict:
     
     return {"judgements": []}
 
-def save_judge_ckpt(next_idx, wins, fails, ties, path):
+def save_judge_ckpt(next_idx, wins, fails, ties, path, judgements):
     with open(path, "w") as f:
         f.write(json.dumps({
             "next_idx": next_idx,
             "wins": wins,
             "fails": fails,
             "ties": ties,
+            "judgements": judgements,
         }))
 
 def load_judge_ckpt(path):
     with open(path, "r") as f:
         saved = json.loads(f.read())
-    return saved["next_idx"], saved["wins"], saved["fails"], saved["ties"]
+    return saved["next_idx"], saved["wins"], saved["fails"], saved["ties"], saved["judgements"]
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -123,9 +124,10 @@ if __name__ == "__main__":
     ties = 0
     fails = 0
     next_idx = 0
+    all_judgements = []
     
     if args.reuse and save_path.exists():
-        next_idx, wins, fails, ties = load_judge_ckpt(save_path)
+        next_idx, wins, fails, ties, all_judgements = load_judge_ckpt(save_path)
         print(f"Resuming from {next_idx}")
     
     for idx in tqdm.trange(0, total, args.batch_size, initial=next_idx, desc="Judging"):
@@ -171,15 +173,18 @@ if __name__ == "__main__":
         judged = perform_judgement.run(llm=kbench.llms[args.judge], prompt=prompt, n_retries=args.retries).result["judgements"]
         
         if judged is not None and len(judged) != 0:
+            all_judgements = all_judgements + judged
             for i in range(len(A)):
                 who_won = judged[i]
                 if "tie"in who_won.lower():
                     wins[pairs[i]["idA"]] += 1
                     wins[pairs[i]["idB"]] += 1
+                    ties += 1
                 else:
                     model_name = pairs[i][f"id{who_won}"]
                     wins[model_name] += 1
         else:
+            all_judgements = all_judgements + ["Failed"]*len(A)
             fails += 1
             with open(failure_path, "a") as f:
                 f.write(json.dumps({
@@ -188,7 +193,7 @@ if __name__ == "__main__":
                 }))
                 f.write("\n")
         
-        save_judge_ckpt(idx + len(A), wins, fails, ties, save_path)
+        save_judge_ckpt(idx + len(A), wins, fails, ties, save_path, all_judgements)
         time.sleep(args.sleep)
         
     save_judge_ckpt(idx + len(A), wins, fails, ties, save_path)
