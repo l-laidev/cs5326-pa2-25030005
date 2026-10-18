@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def plot_sft(metrics, moving_window=250):
+def plot_sft(metrics, moving_window=250, val_steps=250):
     order = ["baseline", "lr", "warmup", "norm", "final-run"]
 
     expToLatex = {
@@ -20,7 +20,14 @@ def plot_sft(metrics, moving_window=250):
     }
     
     f, ax = plt.subplots(1,2,figsize=(8,4))
-    x_range = None
+    x_range = len(metrics[next(iter(metrics))]["train"])
+    if "exp-lower-norm" in metrics:
+        chosen_idx = np.argmin(metrics["exp-lower-norm"]["val"])
+        corresp_idx_in_train = max(0, val_steps*chosen_idx-1)
+    else:
+        chosen_idx = np.argmin(metrics["final-run"]["val"])
+        corresp_idx_in_train = max(0, val_steps*chosen_idx-1)
+    handles, labels = None, None
     for metric in order:
         for prefix in ["lower", "higher"] if metric not in ["baseline", "final-run"] else [""]:
             if metric != "final-run":
@@ -30,23 +37,32 @@ def plot_sft(metrics, moving_window=250):
             
             if exp not in metrics: continue
         
-            if x_range is None:
-                x_range = len(metrics[exp]["train"])
             for phase in metrics[exp]:
                 values = metrics[exp][phase]
+                og_min, og_max = np.min(values), np.max(values)
                 
                 if phase == "train":
                     values = np.lib.stride_tricks.sliding_window_view(values, window_shape=moving_window).mean(axis=-1)
 
-                step = x_range/len(values)
-                start = step-1
+                if "val" in phase:
+                    steps = [val_steps*i for i in range(len(values))]
+                else:
+                    steps = np.arange(moving_window, x_range+1, 1)
+                
                 label = exp.replace("exp-", "").replace("-", " ").title().replace("Lr", "LR")
                 if "baseline" not in exp and "final" not in exp:
                     latex = expToLatex[exp.replace("exp-", "")]
                     label = f"{label} (${latex}$)"
                 
                 ax_idx = 0 if phase == "train" else 1
-                ax[ax_idx].plot(np.arange(start, x_range, step), values, label=label, marker="o" if phase != "train" else '')
+                line1 = ax[ax_idx].plot(steps, values, label=label, marker="o" if phase != "train" else '')
+                if "train" in phase:
+                    twin = ax[ax_idx].twinx()
+                    line2 = twin.plot(metrics[exp][phase], marker="", alpha=0.5, color="blue", label="Unsmoothed curves")
+                    twin.set_yticks(np.arange(og_min, og_max, (og_max-og_min)/4))
+    
+                    lines = line1 + line2
+                    handles, labels = lines, [l.get_label() for l in lines]
                 ax[ax_idx].grid()
 
                 title = phase.title() + " Loss"
@@ -56,9 +72,13 @@ def plot_sft(metrics, moving_window=250):
                 ax[ax_idx].set_ylabel("Cross-Entropy")
                 ax[ax_idx].set_xlabel("Training Step #")
                 ax[ax_idx].set_title(title)
+
+                if "lower-norm" in exp or "final-run" in exp:
+                    og_values = metrics[exp][phase]
+                    chosen_val = og_values[chosen_idx] if "val" in phase else og_values[corresp_idx_in_train]
+                    ax[ax_idx].axvline(corresp_idx_in_train, linestyle="-", color="purple")
+                    ax[ax_idx].text(0.54, 0.55, f"Chosen={chosen_val:.4f}", transform=ax[ax_idx].transAxes, bbox=dict(facecolor='white', alpha=0.5))
     
-    handles, labels = ax[1].get_legend_handles_labels()
-    ax[1]._legend = None
     f.legend(handles, labels, loc="lower center", ncols=3)
     if len(metrics) > 1:
         f.tight_layout(rect=[0, 0.21, 1, 1])
@@ -67,25 +87,36 @@ def plot_sft(metrics, moving_window=250):
     
     return f
 
-def plot_dpo(metrics, moving_window=250):
+def plot_dpo(metrics, moving_window=250, val_steps=5_000):
     f, ax = plt.subplots(2,3,figsize=(10,4))
-    x_range = None
+    x_range = len(metrics[next(iter(metrics))]["train_loss"])
+    chosen_idx = np.argmax(metrics[next(iter(metrics))]["val_rw_acc"])
+    corresp_idx_in_train = val_steps*chosen_idx
+    handles, labels = None, None
     for exp in metrics:
-        if x_range is None:
-            x_range = len(metrics[exp]["train_loss"])
         for metric_phase in metrics[exp]:
+            og_values = metrics[exp][metric_phase]
             values = metrics[exp][metric_phase]
+            og_min, og_max = np.min(og_values), np.max(og_values)
             
             if "train" in metric_phase:
                 values = np.lib.stride_tricks.sliding_window_view(values, window_shape=moving_window).mean(axis=-1)
 
-            step = x_range/len(values)
-            start = step-1
-            
             ax_idx = 0 if "train" in metric_phase else 1
             metric_idx = 0 if "loss" in metric_phase else 1 if "acc" in metric_phase else 2
 
-            ax[ax_idx][metric_idx].plot(np.arange(start, x_range, step), values, marker="o" if "train" not in metric_phase else '')
+            if "val" in metric_phase:
+                steps = [val_steps*i for i in range(len(values))]
+            else:
+                steps = np.arange(moving_window, x_range+1, 1)
+            line1 = ax[ax_idx][metric_idx].plot(steps, values, marker="o" if "train" not in metric_phase else '', label="Smoothed curves")
+            if "train" in metric_phase:
+                twin = ax[ax_idx][metric_idx].twinx()
+                line2 = twin.plot(metrics[exp][metric_phase], marker="", alpha=0.5, color="blue", label="Unsmoothed curves")
+                twin.set_yticks(np.arange(og_min, og_max, (og_max-og_min)/4))
+
+                lines = line1 + line2
+                handles, labels = lines, [l.get_label() for l in lines]
             ax[ax_idx][metric_idx].grid()
 
             axis_label = metric_phase.replace("_", " ").replace("rw", "Reward").replace("acc", "Accuracy").title()
@@ -100,13 +131,13 @@ def plot_dpo(metrics, moving_window=250):
             max_, min_ = np.max(values), np.min(values)
             ax[ax_idx][metric_idx].set_yticks(np.arange(min_, max_, (max_-min_)/4))
 
-            if "val" in metric_phase:
-                best_idx = np.argmin(values) if "loss" in metric_phase else np.argmax(values)
-                best_val = min_ if "loss" in metric_phase else max_
-                ax[ax_idx][metric_idx].axvline(step*(best_idx+1), linestyle="-", color="purple", label=f"Best={best_val:.4f}")
-                ax[ax_idx][metric_idx].legend(loc="center right")
+            chosen_val = og_values[chosen_idx] if "val" in metric_phase else og_values[corresp_idx_in_train]
+            ax[ax_idx][metric_idx].axvline(corresp_idx_in_train, linestyle="-", color="purple")
+            # ax[ax_idx][metric_idx].legend(loc="lower left")
+            ax[ax_idx][metric_idx].text(0.1, 0.58, f"Chosen={chosen_val:.4f}", transform=ax[ax_idx][metric_idx].transAxes, bbox=dict(facecolor='white', alpha=0.5))
     
-    f.tight_layout()
+    f.legend(handles, labels, loc="lower center", ncols=3)
+    f.tight_layout(rect=[0, 0.05, 1, 1])
     
     return f
 

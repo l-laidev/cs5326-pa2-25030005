@@ -130,7 +130,7 @@ if __name__ == "__main__":
         next_idx, wins, fails, ties, all_judgements = load_judge_ckpt(save_path)
         print(f"Resuming from {next_idx}")
     
-    for idx in tqdm.trange(0, total, args.batch_size, initial=next_idx, desc="Judging"):
+    for idx in tqdm.trange(next_idx, total, args.batch_size, initial=next_idx, desc="Judging"):
         A = filesA[idx:min(total, idx+args.batch_size)]
         B = filesB[idx:min(total, idx+args.batch_size)]
         
@@ -196,5 +196,4 @@ if __name__ == "__main__":
         save_judge_ckpt(idx + len(A), wins, fails, ties, save_path, all_judgements)
         time.sleep(args.sleep)
         
-    save_judge_ckpt(idx + len(A), wins, fails, ties, save_path, all_judgements)
     print(f"Saved judge results to: {save_path}")
