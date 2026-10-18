@@ -44,11 +44,14 @@ def prepare_prompt(pairs):
         ins = pairs[idx]["instr"]
         return f"""
 ####### PAIR {idx+1}
-User's Query: {ins}
+User's Query:
+{ins}
 
-Response A: {rA}
+Response A:
+{rA}
 
-Response B: {rB}
+Response B:
+{rB}
 ####### END PAIR
 """
     
@@ -63,7 +66,7 @@ Response B: {rB}
 """
 
 @kbench.task(name="judge_two_responses")
-def perform_judgement(llm, prompt, n_retries):
+def perform_judgement(llm, prompt, n_retries) -> list[str]:
     for attempt in range(n_retries):
         try:
             response: JudgeResponse = llm.prompt(prompt, schema=JudgeResponse)
@@ -130,6 +133,7 @@ if __name__ == "__main__":
         B = filesB[idx:min(total, idx+args.batch_size)]
         
         instr = [a["instruction"] for a in A]
+        instr = [ins[0] if isinstance(ins, list) else ins for ins in instr]
         idA = [a["model"] for a in A]
         idB = [b["model"] for b in B]
         resA =[a[a["model"]] for a in A]
@@ -144,10 +148,19 @@ if __name__ == "__main__":
             idB = srcB[pair]["model"]
 
             # ensure instructions are the exact same
-            assert A[pair]["instruction"] == B[pair]["instruction"]
+            ins = instr[pair]
+            ins_A = A[pair]["instruction"]
+            ins_B = B[pair]["instruction"]
+            ins_A = ins_A[0] if isinstance(ins_A, list) else ins_A
+            ins_B = ins_B[0] if isinstance(ins_B, list) else ins_B
+            assert ins == ins_A and ins_A == ins_B
+
+            # get only the prompt portion
+            if "<|im_start|>user" in ins:
+                ins = ins.split("<|im_start|>user")[1].split("<|im_end|>")[0]
             
             pairs.append({
-                "instr": A[pair]["instruction"],
+                "instr": ins,
                 "idA": idA,
                 "idB": idB,
                 "resA": srcA[pair][idA],
