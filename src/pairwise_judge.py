@@ -66,16 +66,16 @@ Response B:
 """
 
 @kbench.task(name="judge_two_responses")
-def perform_judgement(llm, prompt, n_retries) -> list[str]:
+def perform_judgement(llm, prompt, n_retries) -> dict:
     for attempt in range(n_retries):
         try:
             response: JudgeResponse = llm.prompt(prompt, schema=JudgeResponse)
-            return response.judgements
+            return {"judgements": response.judgements}
         except Exception as e:
             print(f"Attempt {attempt + 1}/{n_retries} failed with error: {e}")
             time.sleep(3 * (attempt + 1))
     
-    return None
+    return {"judgements": []}
 
 def save_judge_ckpt(next_idx, wins, fails, ties, path):
     with open(path, "w") as f:
@@ -168,9 +168,9 @@ if __name__ == "__main__":
             })
         
         prompt = prepare_prompt(pairs)
-        judged = perform_judgement.run(llm=kbench.llms[args.judge], prompt=prompt, n_retries=args.retries)
+        judged = perform_judgement.run(llm=kbench.llms[args.judge], prompt=prompt, n_retries=args.retries).result["judgements"]
         
-        if judged is not None:
+        if judged is not None and len(judged) != 0:
             for i in range(len(A)):
                 who_won = judged[i]
                 if "tie"in who_won.lower():
