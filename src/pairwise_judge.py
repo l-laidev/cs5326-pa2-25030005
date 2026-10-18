@@ -196,5 +196,5 @@ if __name__ == "__main__":
         save_judge_ckpt(idx + len(A), wins, fails, ties, save_path, all_judgements)
         time.sleep(args.sleep)
         
-    save_judge_ckpt(idx + len(A), wins, fails, ties, save_path)
+    save_judge_ckpt(idx + len(A), wins, fails, ties, save_path, all_judgements)
     print(f"Saved judge results to: {save_path}")
